@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Play versus GPT</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="aux/chessboard-1.0.0.css">
+<style>
+.maintext {
+    max-width: 700px;
+    text-align: justify;
+}
+
+.maintitle {
+    max-width: 700px;
+    text-align: left;
+}
+
+.promotion_option {
+    background-color: #ffffff;
+    z-index: 10;
+}
+
+.side_scroll {
+	white-space: nowrap;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+.js_link {
+  cursor: pointer;
+  color: #0000ee;
+}
+
+.disabled_js_link {
+  text-decoration: none;
+  cursor: text;
+  color: #c0c0c0;
+}
+
+h3 {
+  margin-block-end: 3px;
+}
+</style>
+<script type="text/javascript" src="aux/jquery-3.5.1.min.js"></script>
+<script type="text/javascript" src="aux/d3.v5.min.js"></script>
+<script type="text/javascript" src="aux/chessboard-1.0.0_db.js"></script>
+<script type="text/javascript" src="aux/chess.js"></script>
+</head>
+<body>
+<div class="maintitle">
+<h2>Play versus GPT</h2>
+</div>
+<div class="maintext">
+
+<div id="div_settings">
+<input type="checkbox" id="checkbox_board_sound" checked>
+<label for="checkbox_board_sound">Board sounds</label>
+<br/>
+<select id="select_time">
+<option value="1">1 min</option>
+<option value="3" selected>3 min</option>
+<option value="5">5 min</option>
+<option value="10">10 min</option>
+<option value="30">30 min</option>
+<option value="60">60 min</option>
+</select>
++
+<select id="select_increment">
+<option value="0">no incr</option>
+<option value="1">1 sec</option>
+<option value="2" selected>2 sec</option>
+<option value="3">3 sec</option>
+<option value="5">5 sec</option>
+<option value="10">10 sec</option>
+<option value="30">30 sec</option>
+</select>
+<br/><br/>
+</div>
+
+<div id="board_container">
+<div id="main_board"></div>
+</div>
+<br>
+<div id="div_time_remaining" style="font-size:24px;">0:00</div>
+<button id="button_start">Start</button>
+<button id="button_flip">Flip board</button>
+<button id="button_pgn">Show and copy PGN</button>
+<br/><br/>
+<div id="div_pgn"></div>
+</div>
+<div class="maintext" id="div_footer">
+<p><i>Written 2023-09-30.</i></p>
+</div>
+<script type="text/javascript">
+var board = null;
+var game = new Chess();
+var game_details = {
+  awaiting_promotion: false,
+  player_color: "w",
+  num_illegal_moves: 0,
+  dragged_piece: null,
+  timer: null,
+  time_remaining: null,
+  last_timestamp: null,
+  increment: 0,
+  in_game: false
+}
+
+var config = {
+  draggable: true,
+  position: "start",
+  onDragStart: onDragStart,
+  onDrop: on_drop_puzzle,
+  onSnapEnd: onSnapEnd,
+  pieceTheme: function(piece) { return pieces_svg[piece]; },
+  showNotation: false,
+  appearSpeed: 30,
+  moveSpeed: 0,
+  snapSpeed: 0,
+  snapbackSpeed: 0,
+  trashSpeed: 0
+};
+
+// Following SVG's are from Lichess:
+var pieces_svg = {
+  "wP": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PHBhdGggZD0iTTIyLjUgOWMtMi4yMSAwLTQgMS43OS00IDQgMCAuODkuMjkgMS43MS43OCAyLjM4QzE3LjMzIDE2LjUgMTYgMTguNTkgMTYgMjFjMCAyLjAzLjk0IDMuODQgMi40MSA1LjAzLTMgMS4wNi03LjQxIDUuNTUtNy40MSAxMy40N2gyM2MwLTcuOTItNC40MS0xMi40MS03LjQxLTEzLjQ3IDEuNDctMS4xOSAyLjQxLTMgMi40MS01LjAzIDAtMi40MS0xLjMzLTQuNS0zLjI4LTUuNjIuNDktLjY3Ljc4LTEuNDkuNzgtMi4zOCAwLTIuMjEtMS43OS00LTQtNHoiIGZpbGw9IiNmZmYiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==",
+  "wN": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMiAxMGMxMC41IDEgMTYuNSA4IDE2IDI5SDE1YzAtOSAxMC02LjUgOC0yMSIgZmlsbD0iI2ZmZiIvPjxwYXRoIGQ9Ik0yNCAxOGMuMzggMi45MS01LjU1IDcuMzctOCA5LTMgMi0yLjgyIDQuMzQtNSA0LTEuMDQyLS45NCAxLjQxLTMuMDQgMC0zLTEgMCAuMTkgMS4yMy0xIDItMSAwLTQuMDAzIDEtNC00IDAtMiA2LTEyIDYtMTJzMS44OS0xLjkgMi0zLjVjLS43My0uOTk0LS41LTItLjUtMyAxLTEgMyAyLjUgMyAyLjVoMnMuNzgtMS45OTIgMi41LTNjMSAwIDEgMyAxIDMiIGZpbGw9IiNmZmYiLz48cGF0aCBkPSJNOS41IDI1LjVhLjUuNSAwIDEgMS0xIDAgLjUuNSAwIDEgMSAxIDB6bTUuNDMzLTkuNzVhLjUgMS41IDMwIDEgMS0uODY2LS41LjUgMS41IDMwIDEgMSAuODY2LjV6IiBmaWxsPSIjMDAwIi8+PC9nPjwvc3ZnPg==",
+  "wB": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxnIGZpbGw9IiNmZmYiIHN0cm9rZS1saW5lY2FwPSJidXR0Ij48cGF0aCBkPSJNOSAzNmMzLjM5LS45NyAxMC4xMS40MyAxMy41LTIgMy4zOSAyLjQzIDEwLjExIDEuMDMgMTMuNSAyIDAgMCAxLjY1LjU0IDMgMi0uNjguOTctMS42NS45OS0zIC41LTMuMzktLjk3LTEwLjExLjQ2LTEzLjUtMS0zLjM5IDEuNDYtMTAuMTEuMDMtMTMuNSAxLTEuMzU0LjQ5LTIuMzIzLjQ3LTMtLjUgMS4zNTQtMS45NCAzLTIgMy0yeiIvPjxwYXRoIGQ9Ik0xNSAzMmMyLjUgMi41IDEyLjUgMi41IDE1IDAgLjUtMS41IDAtMiAwLTIgMC0yLjUtMi41LTQtMi41LTQgNS41LTEuNSA2LTExLjUtNS0xNS41LTExIDQtMTAuNSAxNC01IDE1LjUgMCAwLTIuNSAxLjUtMi41IDQgMCAwLS41LjUgMCAyeiIvPjxwYXRoIGQ9Ik0yNSA4YTIuNSAyLjUgMCAxIDEtNSAwIDIuNSAyLjUgMCAxIDEgNSAweiIvPjwvZz48cGF0aCBkPSJNMTcuNSAyNmgxME0xNSAzMGgxNW0tNy41LTE0LjV2NU0yMCAxOGg1IiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8+PC9nPjwvc3ZnPg==",
+  "wR": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbD0iI2ZmZiIgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik05IDM5aDI3di0zSDl2M3ptMy0zdi00aDIxdjRIMTJ6bS0xLTIyVjloNHYyaDVWOWg1djJoNVY5aDR2NSIgc3Ryb2tlLWxpbmVjYXA9ImJ1dHQiLz48cGF0aCBkPSJNMzQgMTRsLTMgM0gxNGwtMy0zIi8+PHBhdGggZD0iTTMxIDE3djEyLjVIMTRWMTciIHN0cm9rZS1saW5lY2FwPSJidXR0IiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8+PHBhdGggZD0iTTMxIDI5LjVsMS41IDIuNWgtMjBsMS41LTIuNSIvPjxwYXRoIGQ9Ik0xMSAxNGgyMyIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVqb2luPSJtaXRlciIvPjwvZz48L3N2Zz4=",
+  "wQ": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbD0iI2ZmZiIgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik04IDEyYTIgMiAwIDEgMS00IDAgMiAyIDAgMSAxIDQgMHptMTYuNS00LjVhMiAyIDAgMSAxLTQgMCAyIDIgMCAxIDEgNCAwek00MSAxMmEyIDIgMCAxIDEtNCAwIDIgMiAwIDEgMSA0IDB6TTE2IDguNWEyIDIgMCAxIDEtNCAwIDIgMiAwIDEgMSA0IDB6TTMzIDlhMiAyIDAgMSAxLTQgMCAyIDIgMCAxIDEgNCAweiIvPjxwYXRoIGQ9Ik05IDI2YzguNS0xLjUgMjEtMS41IDI3IDBsMi0xMi03IDExVjExbC01LjUgMTMuNS0zLTE1LTMgMTUtNS41LTE0VjI1TDcgMTRsMiAxMnoiIHN0cm9rZS1saW5lY2FwPSJidXR0Ii8+PHBhdGggZD0iTTkgMjZjMCAyIDEuNSAyIDIuNSA0IDEgMS41IDEgMSAuNSAzLjUtMS41IDEtMS41IDIuNS0xLjUgMi41LTEuNSAxLjUuNSAyLjUuNSAyLjUgNi41IDEgMTYuNSAxIDIzIDAgMCAwIDEuNS0xIDAtMi41IDAgMCAuNS0xLjUtMS0yLjUtLjUtMi41LS41LTIgLjUtMy41IDEtMiAyLjUtMiAyLjUtNC04LjUtMS41LTE4LjUtMS41LTI3IDB6IiBzdHJva2UtbGluZWNhcD0iYnV0dCIvPjxwYXRoIGQ9Ik0xMS41IDMwYzMuNS0xIDE4LjUtMSAyMiAwTTEyIDMzLjVjNi0xIDE1LTEgMjEgMCIgZmlsbD0ibm9uZSIvPjwvZz48L3N2Zz4=",
+  "wK": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMi41IDExLjYzVjZNMjAgOGg1IiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8+PHBhdGggZD0iTTIyLjUgMjVzNC41LTcuNSAzLTEwLjVjMCAwLTEtMi41LTMtMi41cy0zIDIuNS0zIDIuNWMtMS41IDMgMyAxMC41IDMgMTAuNSIgZmlsbD0iI2ZmZiIgc3Ryb2tlLWxpbmVjYXA9ImJ1dHQiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiLz48cGF0aCBkPSJNMTEuNSAzN2M1LjUgMy41IDE1LjUgMy41IDIxIDB2LTdzOS00LjUgNi0xMC41Yy00LTYuNS0xMy41LTMuNS0xNiA0VjI3di0zLjVjLTMuNS03LjUtMTMtMTAuNS0xNi00LTMgNiA1IDEwIDUgMTBWMzd6IiBmaWxsPSIjZmZmIi8+PHBhdGggZD0iTTExLjUgMzBjNS41LTMgMTUuNS0zIDIxIDBtLTIxIDMuNWM1LjUtMyAxNS41LTMgMjEgMG0tMjEgMy41YzUuNS0zIDE1LjUtMyAyMSAwIi8+PC9nPjwvc3ZnPg==",
+  "bP": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PHBhdGggZD0iTTIyLjUgOWMtMi4yMSAwLTQgMS43OS00IDQgMCAuODkuMjkgMS43MS43OCAyLjM4QzE3LjMzIDE2LjUgMTYgMTguNTkgMTYgMjFjMCAyLjAzLjk0IDMuODQgMi40MSA1LjAzLTMgMS4wNi03LjQxIDUuNTUtNy40MSAxMy40N2gyM2MwLTcuOTItNC40MS0xMi40MS03LjQxLTEzLjQ3IDEuNDctMS4xOSAyLjQxLTMgMi40MS01LjAzIDAtMi40MS0xLjMzLTQuNS0zLjI4LTUuNjIuNDktLjY3Ljc4LTEuNDkuNzgtMi4zOCAwLTIuMjEtMS43OS00LTQtNHoiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==",
+  "bN": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMiAxMGMxMC41IDEgMTYuNSA4IDE2IDI5SDE1YzAtOSAxMC02LjUgOC0yMSIgZmlsbD0iIzAwMCIvPjxwYXRoIGQ9Ik0yNCAxOGMuMzggMi45MS01LjU1IDcuMzctOCA5LTMgMi0yLjgyIDQuMzQtNSA0LTEuMDQyLS45NCAxLjQxLTMuMDQgMC0zLTEgMCAuMTkgMS4yMy0xIDItMSAwLTQuMDAzIDEtNC00IDAtMiA2LTEyIDYtMTJzMS44OS0xLjkgMi0zLjVjLS43My0uOTk0LS41LTItLjUtMyAxLTEgMyAyLjUgMyAyLjVoMnMuNzgtMS45OTIgMi41LTNjMSAwIDEgMyAxIDMiIGZpbGw9IiMwMDAiLz48cGF0aCBkPSJNOS41IDI1LjVhLjUuNSAwIDEgMS0xIDAgLjUuNSAwIDEgMSAxIDB6bTUuNDMzLTkuNzVhLjUgMS41IDMwIDEgMS0uODY2LS41LjUgMS41IDMwIDEgMSAuODY2LjV6IiBmaWxsPSIjZWNlY2VjIiBzdHJva2U9IiNlY2VjZWMiLz48cGF0aCBkPSJNMjQuNTUgMTAuNGwtLjQ1IDEuNDUuNS4xNWMzLjE1IDEgNS42NSAyLjQ5IDcuOSA2Ljc1UzM1Ljc1IDI5LjA2IDM1LjI1IDM5bC0uMDUuNWgyLjI1bC4wNS0uNWMuNS0xMC4wNi0uODgtMTYuODUtMy4yNS0yMS4zNC0yLjM3LTQuNDktNS43OS02LjY0LTkuMTktNy4xNmwtLjUxLS4xeiIgZmlsbD0iI2VjZWNlYyIgc3Ryb2tlPSJub25lIi8+PC9nPjwvc3ZnPg==",
+  "bB": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxnIGZpbGw9IiMwMDAiIHN0cm9rZS1saW5lY2FwPSJidXR0Ij48cGF0aCBkPSJNOSAzNmMzLjM5LS45NyAxMC4xMS40MyAxMy41LTIgMy4zOSAyLjQzIDEwLjExIDEuMDMgMTMuNSAyIDAgMCAxLjY1LjU0IDMgMi0uNjguOTctMS42NS45OS0zIC41LTMuMzktLjk3LTEwLjExLjQ2LTEzLjUtMS0zLjM5IDEuNDYtMTAuMTEuMDMtMTMuNSAxLTEuMzU0LjQ5LTIuMzIzLjQ3LTMtLjUgMS4zNTQtMS45NCAzLTIgMy0yeiIvPjxwYXRoIGQ9Ik0xNSAzMmMyLjUgMi41IDEyLjUgMi41IDE1IDAgLjUtMS41IDAtMiAwLTIgMC0yLjUtMi41LTQtMi41LTQgNS41LTEuNSA2LTExLjUtNS0xNS41LTExIDQtMTAuNSAxNC01IDE1LjUgMCAwLTIuNSAxLjUtMi41IDQgMCAwLS41LjUgMCAyeiIvPjxwYXRoIGQ9Ik0yNSA4YTIuNSAyLjUgMCAxIDEtNSAwIDIuNSAyLjUgMCAxIDEgNSAweiIvPjwvZz48cGF0aCBkPSJNMTcuNSAyNmgxME0xNSAzMGgxNW0tNy41LTE0LjV2NU0yMCAxOGg1IiBzdHJva2U9IiNlY2VjZWMiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiLz48L2c+PC9zdmc+",
+  "bR": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik05IDM5aDI3di0zSDl2M3ptMy41LTdsMS41LTIuNWgxN2wxLjUgMi41aC0yMHptLS41IDR2LTRoMjF2NEgxMnoiIHN0cm9rZS1saW5lY2FwPSJidXR0Ii8+PHBhdGggZD0iTTE0IDI5LjV2LTEzaDE3djEzSDE0eiIgc3Ryb2tlLWxpbmVjYXA9ImJ1dHQiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiLz48cGF0aCBkPSJNMTQgMTYuNUwxMSAxNGgyM2wtMyAyLjVIMTR6TTExIDE0VjloNHYyaDVWOWg1djJoNVY5aDR2NUgxMXoiIHN0cm9rZS1saW5lY2FwPSJidXR0Ii8+PHBhdGggZD0iTTEyIDM1LjVoMjFtLTIwLTRoMTltLTE4LTJoMTdtLTE3LTEzaDE3TTExIDE0aDIzIiBmaWxsPSJub25lIiBzdHJva2U9IiNlY2VjZWMiIHN0cm9rZS13aWR0aD0iMSIgc3Ryb2tlLWxpbmVqb2luPSJtaXRlciIvPjwvZz48L3N2Zz4=",
+  "bQ": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxnIHN0cm9rZT0ibm9uZSI+PGNpcmNsZSBjeD0iNiIgY3k9IjEyIiByPSIyLjc1Ii8+PGNpcmNsZSBjeD0iMTQiIGN5PSI5IiByPSIyLjc1Ii8+PGNpcmNsZSBjeD0iMjIuNSIgY3k9IjgiIHI9IjIuNzUiLz48Y2lyY2xlIGN4PSIzMSIgY3k9IjkiIHI9IjIuNzUiLz48Y2lyY2xlIGN4PSIzOSIgY3k9IjEyIiByPSIyLjc1Ii8+PC9nPjxwYXRoIGQ9Ik05IDI2YzguNS0xLjUgMjEtMS41IDI3IDBsMi41LTEyLjVMMzEgMjVsLS4zLTE0LjEtNS4yIDEzLjYtMy0xNC41LTMgMTQuNS01LjItMTMuNkwxNCAyNSA2LjUgMTMuNSA5IDI2eiIgc3Ryb2tlLWxpbmVjYXA9ImJ1dHQiLz48cGF0aCBkPSJNOSAyNmMwIDIgMS41IDIgMi41IDQgMSAxLjUgMSAxIC41IDMuNS0xLjUgMS0xLjUgMi41LTEuNSAyLjUtMS41IDEuNS41IDIuNS41IDIuNSA2LjUgMSAxNi41IDEgMjMgMCAwIDAgMS41LTEgMC0yLjUgMCAwIC41LTEuNS0xLTIuNS0uNS0yLjUtLjUtMiAuNS0zLjUgMS0yIDIuNS0yIDIuNS00LTguNS0xLjUtMTguNS0xLjUtMjcgMHoiIHN0cm9rZS1saW5lY2FwPSJidXR0Ii8+PHBhdGggZD0iTTExIDM4LjVhMzUgMzUgMSAwIDAgMjMgMCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9ImJ1dHQiLz48cGF0aCBkPSJNMTEgMjlhMzUgMzUgMSAwIDEgMjMgMG0tMjEuNSAyLjVoMjBtLTIxIDNhMzUgMzUgMSAwIDAgMjIgMG0tMjMgM2EzNSAzNSAxIDAgMCAyNCAwIiBmaWxsPSJub25lIiBzdHJva2U9IiNlY2VjZWMiLz48L2c+PC9zdmc+",
+  "bK": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0NSIgaGVpZ2h0PSI0NSI+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMi41IDExLjYzVjYiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiLz48cGF0aCBkPSJNMjIuNSAyNXM0LjUtNy41IDMtMTAuNWMwIDAtMS0yLjUtMy0yLjVzLTMgMi41LTMgMi41Yy0xLjUgMyAzIDEwLjUgMyAxMC41IiBmaWxsPSIjMDAwIiBzdHJva2UtbGluZWNhcD0iYnV0dCIgc3Ryb2tlLWxpbmVqb2luPSJtaXRlciIvPjxwYXRoIGQ9Ik0xMS41IDM3YzUuNSAzLjUgMTUuNSAzLjUgMjEgMHYtN3M5LTQuNSA2LTEwLjVjLTQtNi41LTEzLjUtMy41LTE2IDRWMjd2LTMuNWMtMy41LTcuNS0xMy0xMC41LTE2LTQtMyA2IDUgMTAgNSAxMFYzN3oiIGZpbGw9IiMwMDAiLz48cGF0aCBkPSJNMjAgOGg1IiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8+PHBhdGggZD0iTTMyIDI5LjVzOC41LTQgNi4wMy05LjY1QzM0LjE1IDE0IDI1IDE4IDIyLjUgMjQuNWwuMDEgMi4xLS4wMS0yLjFDMjAgMTggOS45MDYgMTQgNi45OTcgMTkuODVjLTIuNDk3IDUuNjUgNC44NTMgOSA0Ljg1MyA5IiBzdHJva2U9IiNlY2VjZWMiLz48cGF0aCBkPSJNMTEuNSAzMGM1LjUtMyAxNS41LTMgMjEgMG0tMjEgMy41YzUuNS0zIDE1LjUtMyAyMSAwbS0yMSAzLjVjNS41LTMgMTUuNS0zIDIxIDAiIHN0cm9rZT0iI2VjZWNlYyIvPjwvZz48L3N2Zz4="
+};
+
+var move_sounds = {
+  "move": new Audio("aux/Move.ogg"),
+  "capture": new Audio("aux/Capture.ogg")
+};
+
+function highlight_move(source, target) {
+  $("#main_board").find(".move-highlight").removeClass("move-highlight");
+  $("#main_board").find(".square-" + source).addClass("move-highlight");
+  $("#main_board").find(".square-" + target).addClass("move-highlight");
+}
+
+function onDragStart(source, piece, position, orientation) {
+  // do not pick up pieces if the game is over
+  if (game.game_over()) { return false; }
+  if (!game_details.in_game) { return false; }
+  if (game.turn() != game_details["player_color"]) { return false; }
+
+  // only pick up pieces for the side to move
+  if ((game.turn() === "w" && piece.search(/^b/) !== -1) ||
+      (game.turn() === "b" && piece.search(/^w/) !== -1)) {
+    return false;
+  }
+  
+  game_details["dragged_piece"] = piece.substring(1, 2);
+}
+
+function play_move_sound(is_capture) {
+  if (!$("#checkbox_board_sound")[0].checked) { return; }
+  
+  if (is_capture) {
+    move_sounds.capture.currentTime = 0;
+    move_sounds.capture.play();
+  } else {
+    move_sounds.move.currentTime = 0;
+    move_sounds.move.play();
+  }
+}
+
+function move_is_capture(move_flags) {
+  return (move_flags.indexOf("c") >= 0) || (move_flags.indexOf("e") >= 0);
+}
+
+function set_move_sound(move_flags) {
+  var is_capture = move_is_capture(move_flags);
+  play_move_sound(is_capture);
+}
+
+function check_game_over() {
+  if (game.in_checkmate()) {
+    setTimeout(function () { window.alert("Checkmate."); }, 200);
+  } else if (game.in_stalemate()) {
+    setTimeout(function () { window.alert("Stalemate."); }, 200);
+  } else if (game.in_draw()) {
+    setTimeout(function () { window.alert("Draw."); }, 200);
+  }
+
+  game_details.in_game = !game.game_over();
+  return game.game_over();
+}
+
+function post_move() {
+  // Append the next move number if it is now White's turn:
+  var n = game.history().length;
+  var append_text = (n & 1) ? "" : " " + ((n >> 1) + 1) + ".";
+
+  $.ajax({
+    type: "POST",
+    url: "make_move",
+    data: "pgn=" + encodeURIComponent(game.pgn() + append_text),
+    success: make_server_move
+  });
+}
+
+function make_server_move(move_san) {
+  if (move_san == "1-0") {
+    window.alert("GPT says 1-0.");
+    return;
+  }
+
+  if (move_san == "0-1") {
+    window.alert("GPT says 0-1.");
+    return;
+  }
+
+  if (move_san.substring(0, 3) == "1/2") {
+    window.alert("GPT says 1/2-1/2");
+    return;
+  }
+
+  var move = game.move(move_san);
+
+  if (move === null) {
+    game_details["num_illegal_moves"]++;
+    var caption = "Move from GPT is " + move_san + ", which is illegal.";
+    if (game_details["num_illegal_moves"] > 5) {
+      caption += "\nToo many illegal moves, game over.";
+    }
+    window.alert(caption);
+    if (game_details["num_illegal_moves"] > 5) {
+      return;
+    }
+    post_move();
+    return;
+  }
+
+  set_move_sound(move.flags);
+  highlight_move(move.from, move.to);
+  board.position(game.fen(), false);
+
+  check_game_over();
+  resume_clock();
+}
+
+function make_auto_move(source, target, promotion_piece, is_user_promotion) {
+  var move = game.move({
+    from: source,
+    to: target,
+    promotion: promotion_piece
+  });
+  
+  if (move === null) { return; }
+  
+  set_move_sound(move.flags);
+  highlight_move(source, target);
+  board.position(game.fen(), false);
+
+  if (is_user_promotion) {
+    if (check_game_over()) { return; }
+    post_move();
+    add_increment();
+    stop_clock();
+  }
+}
+
+function make_user_move(source, target, promotion_piece) {
+  var move = game.move({
+    from: source,
+    to: target,
+    promotion: promotion_piece
+  });
+  
+  // illegal move
+  if (move === null) return "snapback";
+  
+  set_move_sound(move.flags);
+  highlight_move(source, target);
+  board.position(game.fen(), false);
+  if (check_game_over()) { return; }
+
+  add_increment();
+  stop_clock();
+  post_move();
+
+  return "";
+}
+
+function do_promotion(source, target, promoted_piece) {
+  $(".promotion_option").remove();
+  game_details["awaiting_promotion"] = false;
+  var piece = promoted_piece.toLowerCase();
+  make_auto_move(source, target, piece, true);
+}
+
+function on_drop_puzzle(source, target) {
+  if (onDrop(source, target) === "snapback") { return; }
+  // Is this needed?
+  // if (awaiting_promotion) { return; }
+}
+
+function onDrop(source, target) {
+  if (game_details["dragged_piece"] === "P") {
+    var seventh = "7";
+    var eighth = "8";
+    
+    if (game.turn() === "b") {
+      seventh = "2";
+      eighth = "1";
+    }
+    
+    if ((source.substring(1, 2) == seventh) && (target.substring(1, 2) == eighth)) {
+      // Possible promotion
+      var pawn_moves = game.moves({"square": source, "verbose": true});
+      var n_legal = pawn_moves.length;
+      is_legal = false;
+      
+      for (var i = 0; i < n_legal; i++) {
+        if (pawn_moves[i].to === target) {
+          is_legal = true;
+          break;
+        }
+      }
+      
+      if (is_legal) {
+        make_promotion_options(game.turn(), source, target);
+        return "snapback";
+      }
+    }
+  }
+  
+  return make_user_move(source, target, "q");
+}
+
+// update the board position after the piece snap
+// for castling, en passant, pawn promotion
+function onSnapEnd () {
+  board.position(game.fen());
+}
+
+function make_promotion_options(color, source, target) {
+  game_details["awaiting_promotion"] = true;
+  var posn = $(".square-" + target).position();
+  var orientation = board.orientation();
+  var square_increment = square_width;
+  
+  if (orientation.substring(0, 1) !== color) {
+    square_increment *= -1;
+  }
+  
+  var base_elt = $("<div/>", {
+    "class": "promotion_option"
+  }).css({
+    "position": "absolute",
+    "width": square_width + "px",
+    "height": square_width + "px",
+    "left": posn.left + "px"
+  })
+  
+  var promotion_pieces = ["Q", "N", "R", "B"];
+  
+  for (var i = 0; i < 4; i++) {
+    // I had horrible trouble sorting out touch events
+    // from clicks; probably some of this is unnecessary.
+    var click_function = function(i) {
+      return function(e) {
+        e.preventDefault();
+        do_promotion(source, target, promotion_pieces[i]);
+      }
+    }
+    
+    var mousedown_function = function(i) {
+      return function() {
+        do_promotion(source, target, promotion_pieces[i]);
+      }
+    }
+    
+    var elt = base_elt.clone()
+      .css("top", (posn.top + i * square_increment) + "px")
+      .on("mouseover", function() {
+        $(this).css({"background-color": "#cc672c"});
+      })
+      .on("mouseout", function() {
+        $(this).css({"background-color": "white"});
+      })
+      .on("touchstart", click_function(i))
+      .on("touchend", function(e) { e.preventDefault(); })
+      .on("mousedown", mousedown_function(i));
+      
+    
+    var img= $("<img/>", {
+      "src": pieces_svg[color + promotion_pieces[i]]
+    }).css({
+      "width": square_width + "px",
+      "height": square_width + "px"
+    });
+    
+    img.appendTo(elt);
+    elt.appendTo("#board_container");
+  }
+}
+
+function update_clock() {
+  var minutes = Math.floor(game_details.time_remaining / 60);
+  var seconds = Math.round(game_details.time_remaining - 60 * minutes);
+  if (seconds == 60) {
+    minutes--;
+    seconds = 0;
+  }
+  $("#div_time_remaining").html(minutes + ":" + ("00" + seconds).slice(-2));
+}
+
+function do_clock_tick() {
+  if (!game_details.in_game) { return; }
+  var now = Date.now();
+  var elapsed = now - game_details.last_timestamp;
+  game_details.last_timestamp = now;
+  game_details.time_remaining -= elapsed / 1000;
+  update_clock();
+  if (game_details.time_remaining <= 0) {
+    window.alert("Flag.");
+    game_details.in_game = false;
+  }
+  ms_till_next_tick = 1000 * (game_details.time_remaining % 1);
+  game_details.timer = setTimeout(do_clock_tick, ms_till_next_tick);
+}
+
+function resume_clock() {
+  game_details.last_timestamp = Date.now();
+  do_clock_tick();
+}
+
+function stop_clock() {
+  game_details.timer = clearInterval(game_details.timer);
+  update_clock();
+}
+
+function add_increment() {
+  game_details.time_remaining += game_details.increment;
+}
+
+function flip_board() {
+  board.flip();
+}
+
+function get_pgn() {
+  var pgn = game.pgn();
+  $("#div_pgn").html(pgn);
+  navigator.clipboard.writeText(pgn);
+}
+
+function start_game() {
+  game.reset();
+  game_details.player_color = board.orientation() == "white" ? "w" : "b";
+  game_details.num_illegal_moves = 0;
+  var minutes = parseFloat($("#select_time").find(":selected").val());
+  var incr = parseInt($("#select_increment").find(":selected").val());
+  game_details.increment = incr;
+  game_details.time_remaining = 60*minutes + incr;
+  game_details.in_game = true;
+  update_clock();
+  if (game_details.player_color == "w") {
+    resume_clock();
+  } else {
+    post_move();
+  }
+}
+
+board = Chessboard("main_board", config);
+var square_width = $(".square-a8").width();
+var board_posn = $("#board_container").position();
+
+$("#button_start").off("click");
+$("#button_flip").on("click", flip_board);
+$("#button_start").on("click", start_game);
+$("#main_board").css("display", "block");
+$("#button_pgn").on("click", get_pgn);
+
+</script>
+</body>
+</html>

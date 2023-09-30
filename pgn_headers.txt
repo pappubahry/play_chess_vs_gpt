@@ -1,0 +1,9 @@
+[Event "2023 Chess Championship"]
+[Site ""]
+[Date "2023.09.26"]
+[Round "5"]
+[White "Carlsen, Magnus"]
+[Black "Caruana, Fabiano"]
+[WhiteElo "2839"]
+[BlackElo "2786"]
+
